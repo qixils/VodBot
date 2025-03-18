@@ -226,7 +226,10 @@ def get_vod(videoId: str, conf: Config) -> Vod:
 	)
 	resp = gql.gql_query(query=query).json()
 
-	# print(resp)
+	try:
+		print(resp)
+	except:
+		pass
 
 	if "data" not in resp or not resp["data"] or "video" not in resp["data"] or not resp["data"]["video"]:
 		raise gql.GQLItemError(f"Failed to find video for `{videoId}`. {resp}")
