@@ -1,12 +1,14 @@
 # Module to ship webhooks out to various places, currently only Discord is supported
-from typing import Dict, List, Union
+from typing import Dict, List, Union, TYPE_CHECKING
 
-from vodbot.commands.stage import StageData
 from .twitch import Clip, Vod
 from .config import Config
 from .util import format_duration as formdur
 
 from discord_webhook import DiscordWebhook, DiscordEmbed
+
+if TYPE_CHECKING:
+	from vodbot.stagedata import StageData
 
 _config_attributes = {
 	"pull_vod": "Pulled VOD",
@@ -128,7 +130,7 @@ def send_pull_job_done(fin_vods, fin_clips, all_vods, all_clips):
 	)
 
 
-def send_export_video(stage: StageData):
+def send_export_video(stage: "StageData"):
 	slices = "\n".join(f"{s.video_id} > {s.ss} - {s.to}" for s in stage.slices)
 	_send_webhook("export_video",
 		title=f'Exported stage "{stage.id}"',
@@ -157,7 +159,7 @@ def send_export_job_done(fin_vids: int, all_vids: int):
 	)
 
 
-def send_upload_video(stage: StageData, url: str):
+def send_upload_video(stage: "StageData", url: str):
 	slices = "\n".join(f"{s.video_id} > {s.ss} - {s.to}" for s in stage.slices)
 	_send_webhook("upload_video",
 		url=url, title=f'Uploaded stage "{stage.id}"',

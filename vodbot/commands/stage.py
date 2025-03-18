@@ -1,6 +1,11 @@
 # Staging, where videos get staged and set up with metadata to upload
 
+from vodbot import twitch
+from vodbot.itd.gql import set_client_id, GQLItemError
+from vodbot.stagedata import VideoSlice, StageData, ThumbnailData
 from vodbot.cache import Cache, load_cache, save_cache
+from vodbot.commands.pull import save_vod
+from vodbot.commands.upload import run as run_upload
 import vodbot.util as util
 from vodbot.config import DEFAULT_CONFIG_DIRECTORY, _ConfigThumbnailIcon, Config
 from vodbot.printer import cprint, colorize
@@ -12,11 +17,13 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from os import remove as os_remove, listdir as os_listdir
 from os.path import isfile, isdir
-from typing import Dict, List, Optional
-from random import choice
-from dataclasses import dataclass, field
-from dataclasses_json import dataclass_json
-from string import ascii_lowercase, digits as ascii_digits
+from typing import Dict, List, TypedDict
+
+
+class VideoData(TypedDict):
+	id: str
+	filename: Path
+	meta: twitch.Metadata
 
 
 # Python's input function allows for inputs that should not be allowed in filenames such as control characters
@@ -26,65 +33,6 @@ RESERVED_NAMES = [
 	"COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
 	"LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
 ]
-
-@dataclass_json
-@dataclass
-class VideoSlice():
-	video_id: str
-	ss: str
-	to: str
-	filepath: str
-
-
-@dataclass_json
-@dataclass
-class ThumbnailData():
-	heads: List[str]
-	game: str
-	text: str
-	video_slice_id: int
-	timestamp: str
-
-
-@dataclass_json
-@dataclass
-class StageData():
-	title: str
-	desc: str
-	streamers: List[str]
-	datestring: str
-
-	slices: List[VideoSlice]
-	thumbnail: Optional[ThumbnailData] = None
-
-	id: str = field(default_factory=lambda: 
-		"".join([choice(ascii_lowercase + ascii_digits) for _ in range(4)]))
-	
-	def write_stage(self, filename):
-		with open(filename, "w") as f:
-			f.write(self.to_json())
-	
-	@staticmethod
-	def load_from_id(stagedir: Path, sid: str) -> 'StageData':
-		jsonread = None
-		try:
-			with open(stagedir / f"{sid}.stage") as f:
-				jsonread = json.load(f)
-		except FileNotFoundError:
-			util.exit_prog(46, f'Could not find stage "{sid}". (FileNotFound)')
-		except KeyError:
-			util.exit_prog(46, f'Could not parse stage "{sid}" as JSON. Is this file corrupted?')
-		
-		return StageData.from_dict(jsonread)
-	
-	@staticmethod
-	def load_all_stages(stagedir: Path) -> List['StageData']:
-		stages = []
-		for d in os_listdir(stagedir):
-			if isfile(stagedir / d) and d.endswith(".stage"):
-				stages.append(StageData.load_from_id(stagedir, d[:-6]))
-		
-		return stages
 
 
 class CouldntFindVideo(Exception):
@@ -97,14 +45,17 @@ def create_format_dict(conf, streamers, utcdate=None, truedate=None):
 	if truedate == None:
 		try:
 			# https://stackoverflow.com/a/37097784/13977827
-			sign, hours, minutes = re.match('([+\-]?)(\d{2})(\d{2})', conf.stage.timezone).groups()
+			sign, hours, minutes = re.match(r'([+-]?)(\d{2})(\d{2})', conf.stage.timezone).groups()
 			sign = -1 if sign == '-' else 1
 			hours, minutes = int(hours), int(minutes)
 
 			thistz = timezone(sign * timedelta(hours=hours, minutes=minutes))
 		except:
 			util.exit_prog(73, f"Unknown timezone `{conf.stage.timezone}`")
-		date = datetime.strptime(utcdate, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+		try:
+			date = datetime.strptime(utcdate, "%Y-%m-%dT%H:%M:%S.%fZ").replace(tzinfo=timezone.utc)
+		except ValueError:
+			date = datetime.strptime(utcdate, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
 		datestring = date.astimezone(thistz).strftime("%Y/%m/%d")
 	else:
 		datestring = truedate
@@ -191,8 +142,8 @@ def find_video_by_id(vid_id, conf: Config, cache: Cache):
 			metas = [m for m in metas if vid_id in m] # multiple types of id's exist, so we have to soft match
 			if len(metas) > 0:
 				vid_id = metas[0] # use first result of matching
-				metajson = None
 				try:
+					metajson: twitch.Metadata
 					with open(folder / f"{vid_id}.meta") as f:
 						metajson = json.load(f)
 					filename = folder / f"{metajson['created_at']}_{metajson['id']}.mkv".replace(":", ";")
@@ -281,7 +232,7 @@ def check_time(prefix, resp, default=None):
 			a = 'ss' if prefix=='Start' else 'to'
 			t = '0:0:0' if prefix=='Start' else 'EOF'
 			f = f"#fW#l{prefix} time of the Video#r #d(--{a}, default {t})#r: "
-			output = input(colorize(f))
+			output = ""  # input(colorize(f))
 		checkedonce = True
 
 		if output == "":
@@ -464,6 +415,8 @@ def check_thumbnail_game(possible_games: Dict[str, _ConfigThumbnailIcon]) -> str
 
 
 def check_thumbnail_text() -> str:
+	if True:
+		return ""
 	# text = ""
 	# while not text:
 	# 	# TODO: check text?
@@ -511,32 +464,53 @@ def check_thumbnail_timestamp() -> str:
 
 
 def _new(args, conf: Config, cache: Cache):
+	if not args.id:
+		util.exit_prog(13, 'No videos')
+		return
+	
 	STAGE_DIR = conf.directories.stage
+	set_client_id(conf.pull.gql_client)
 
 	# find the videos by their ids to confirm they exist
-	videos = []
+	videos: list[VideoData] = []
+	video: str
 	for video in args.id:
 		try:
 			(filename, metadata) = find_video_by_id(video, conf, cache)
 			videos += [{"id":video, "file":filename, "meta":metadata}]
 		except CouldntFindVideo:
-			util.exit_prog(13, f'Could not find video with ID "{args.id}"')
+			try:
+				vod = twitch.get_vod(video, conf)
+				save_vod(vod, conf, conf.directories.vods / "unknown", cache)
+
+				(filename, metadata) = find_video_by_id(video, conf, cache)
+				videos += [{"id":video, "file":filename, "meta":metadata}]
+			except (CouldntFindVideo, GQLItemError):
+				util.exit_prog(13, f'Could not download video with ID "{args.id}"')
+				return
 	
 	# Get what streamers were involved (usernames), only asked if args is not full
 	if not args.streamer:
-		default_streamers = args.streamer
+		default_streamers: set[str] = set()
 		for f in videos:
-			if f["meta"]["user_login"] not in default_streamers:
-				default_streamers.append(f["meta"]["user_login"])
-		args.streamer = check_streamers(default=default_streamers, conf_users=[chan.username for chan in conf.channels])
+			default_streamers.add(f["meta"]["user_login"])
+		args.streamer = list(default_streamers) # check_streamers(default=list(default_streamers), conf_users=[chan.username for chan in conf.channels])
 
 	# get title
 	if not args.title:
-		args.title = check_title(default=None)
+		args.title = check_title(default=f"{videos[0]["meta"]["title"]} | {videos[0]["meta"]["user_name"]} stream archive")
 
 	# get description
 	formatdict, datestring = create_format_dict(conf, args.streamer, utcdate=metadata["created_at"])
-	args.desc = check_description(formatdict, inputdefault=args.desc)
+	args.desc = check_description(formatdict, inputdefault=f'''
+This stream was automatically archived from a highlight on Twitch. It was discovered on speedrun.com and observed to be highly likely at risk of automatic deletion by Twitch on April 19th, 2025.
+
+If this video is noticed to be uploaded elsewhere by the creator or requested to be taken down then I will gladly oblige.
+
+This {videos[0]["meta"]["game_name"] or 'speedrun'} video was originally published on {{date}} on {' & '.join([f'https://twitch.tv/videos/{video["id"]}' for video in videos])} by {{link}}.
+
+For more information about this project, please visit https://archive.speedrun.club/
+'''.strip())
 
 	# get timestamps for each video through input
 	for x in range(len(videos)):
@@ -663,6 +637,9 @@ def _new(args, conf: Config, cache: Cache):
 	stage.write_stage(stagename)
 	cache.stages.append(stage.id)
 	# Done!
+
+	args.id = stage.id
+	run_upload(args)
 
 
 def _list(args, conf:Config, cache: Cache):

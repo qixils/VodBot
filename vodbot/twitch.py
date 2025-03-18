@@ -1,9 +1,33 @@
 # Module to make API calls to Twitch.tv
 
-from typing import List
+from typing import List, TypedDict
+
+from vodbot.config import Config
+from vodbot.util import safe_append_line
 from .itd import gql
 
 import json
+
+
+class VodChapterEncoded(TypedDict):
+	pos: int
+	dur: int
+	type: str
+	desc: str
+
+
+class Metadata(TypedDict):
+	id: str
+	user_id: str
+	user_login: str
+	user_name: str
+	game_id: str
+	game_name: str
+	title: str
+	created_at: str
+	length: int
+	has_chat: bool
+	chapters: list[VodChapterEncoded]
 
 
 class VodChapter:
@@ -15,10 +39,10 @@ class VodChapter:
 		self.type = type
 		self.description = description
 
-	def __repr__(self):
+	def __repr__(self) -> str:
 		return f"VodChapter({self.position}, {self.duration}, {self.created_at}, {self.description})"
 
-	def to_dict(self):
+	def to_dict(self) -> VodChapterEncoded:
 		return {"pos":self.position, "dur":self.duration, "type":self.type, "desc":self.description}
 
 class Vod:
@@ -51,7 +75,7 @@ class Vod:
 		return f"Vod({self.id}, {self.user_name}, {self.created_at}, {self.length}s)"
 	
 	def write_meta(self, filename):
-		jsondict = {
+		jsondict: Metadata = {
 			"id": self.id,
 			"user_id": self.user_id,
 			"user_login": self.user_login,
@@ -185,6 +209,94 @@ def get_channels(channel_logins: List[str]) -> List[Channel]:
 		)
 	
 	return channels
+
+
+def get_vod(videoId: str, conf: Config) -> Vod:
+	"""
+	Uses a (blocking) HTTP request to retrieve VOD info.
+
+	:param channel: A video ID.
+	:returns: A VOD object.
+	"""
+
+	# get videos of multiple types
+	# past streams = ARCHIVE, segment of stream = HIGHLIGHT, upload = UPLOAD, premiere = PAST_PREMIERE
+	query = gql.GET_VIDEO_QUERY.format(
+		video_id=videoId,
+	)
+	resp = gql.gql_query(query=query).json()
+
+	# print(resp)
+
+	if "data" not in resp or not resp["data"] or "video" not in resp["data"] or not resp["data"]["video"]:
+		raise gql.GQLItemError(f"Failed to find video for `{videoId}`. {resp}")
+
+	v = resp["data"]["video"]
+
+	if v["lengthSeconds"] > (12 * 60 * 60):
+		safe_append_line(conf.directories.vods / "skipped.txt", videoId)
+		print(f"Cannot upload video as it exceeds 12 hours ({v["lengthSeconds"]})")
+		raise gql.GQLItemError(f"Cannot download video as it exceeds 12 hours ({v["lengthSeconds"]})")
+
+	c, g, b, s = v["creator"], v["game"], v["broadcastType"], v["status"]
+
+#	# check broadcast type
+#	if not any(b==t for t in ["ARCHIVE", "HIGHLIGHT", "UPLOAD", "PAST_PREMIERE"]):
+#		continue
+#	# This video is still be processed (or is live) and it must be skipped.
+#	# if b == "ARCHIVE" and s == "RECORDING":
+#	if s != "RECORDED":
+#		continue
+
+	game_id = game_name = ""
+
+	if g:
+		game_id, game_name = g["id"], g["name"]
+	
+	
+	# Get stream chapter info now
+	chapters = []
+	chapter_page = "null"
+
+	while True:
+		query = gql.GET_VIDEO_CHAPTERS.format(
+			id=v["id"], after=chapter_page
+		)
+		resp = gql.gql_query(query=query).json()
+		
+		if not resp["data"]["video"]:
+			raise gql.GQLItemError(f"Failed to find moments for video `{v['id']}`.")
+		
+		resp = resp["data"]["video"]["moments"]
+		
+		if not resp or not resp["edges"]:
+			break
+
+		for chap in resp["edges"]:
+			n = chap["node"]
+			chapters.append(
+				VodChapter(
+					type=n["type"], description=n["description"],
+					position=int(n["positionMilliseconds"]/1000),
+					duration=int(n["durationMilliseconds"]/1000)
+					# its fine to do the above because twitch's precision of message timings isnt greater than seconds
+				)
+			)
+		
+		if chapter_page == "" or chapter_page == None:
+			break
+		
+		if not resp["edges"][-1]["cursor"]:
+			break
+
+		chapter_page = '"' + resp["edges"][-1]["cursor"] + '"'
+
+	return Vod(
+		id=v["id"], length=v["lengthSeconds"], title=v["title"],
+		user_id=c["id"], user_login=c["login"], user_name=c["displayName"], 
+		game_id=game_id, game_name=game_name, created_at=v["publishedAt"],
+		chapters=chapters
+	)
 
 
 def get_channel_vods(channel: Channel) -> List[Vod]:

@@ -74,7 +74,7 @@ GET_CHANNEL_CLIPS_QUERY = """
 GET_VIDEO_QUERY = """
 {{  video(id: "{video_id}") {{
 		id title publishedAt
-		broadcastType lengthSeconds
+		broadcastType status lengthSeconds
 		game {{ id name }} creator {{ id login displayName }}
 }}  }}
 """

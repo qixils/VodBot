@@ -118,6 +118,9 @@ def save_cache(conf: Config, cache: Cache) -> None:
 	"""
 	Saves a cache JSON file to the temp directory
 	"""
+	if True:
+		return
+
 	global _cached_cache
 
 	_cached_cache = cache

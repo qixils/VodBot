@@ -1,5 +1,10 @@
 # Module to pull and create different files and directories on the OS
 
+import msvcrt
+from pathlib import Path
+from time import sleep
+
+from filelock import FileLock
 from .printer import cprint
 from .config import Config, DEFAULT_CONFIG_SCHEMA
 
@@ -153,3 +158,11 @@ def exit_prog(code=0, errmsg=None):
 
 	cprint("#r#dExiting...#r")
 	sys.exit(code)
+
+
+def safe_append_line(path: Path, content: str):
+	lock = FileLock(path.with_name(path.name + ".lock"), timeout = 10)
+	with lock:
+		with open(path, "a") as f:
+			f.write(f"{content}\n")
+			f.flush()

@@ -4,12 +4,12 @@
 # https://developers.google.com/youtube/v3/guides/uploading_a_video
 # https://learndataanalysis.org/how-to-upload-a-video-to-youtube-using-youtube-data-api-in-python/
 
-from .stage import StageData
+from vodbot.stagedata import StageData
 
 import vodbot.video as vbvid
 import vodbot.chatlog as vbchat
 import vodbot.thumbnail as vbthumbnail
-from vodbot.util import exit_prog, load_conf, format_size
+from vodbot.util import exit_prog, load_conf, format_size, safe_append_line
 from vodbot.cache import load_cache, save_cache
 from vodbot.printer import cprint
 from vodbot.config import Config
@@ -48,11 +48,11 @@ def _upload_artifact(upload_string, response_upload, getting_video=False, filesi
 	video_id = "" # youtube video id
 	resp = None
 	errn = 0
-	errn_max = 10
+	errn_max = 50
 
 	uploaded = 0
 
-	def print_error(f:List, secs:int=5):
+	def print_error(f:List, secs:int=10):
 		nonlocal errn, errn_max
 		f = [str(x) for x in f]
 		cprint(f"#fY#dWARN: An HTTP error has occurred ({errn}/{errn_max}), retyring in {secs} seconds... ({', '.join(f)})#r")
@@ -130,6 +130,7 @@ def upload_video(conf: Config, service: Resource, stagedata: StageData) -> str:
 	}
 
 	# create media file, upload in chunks
+	print(f"Chunk size: {conf.upload.chunk_size}")
 	media_file = MediaFileUpload(str(tmpfile), chunksize=conf.upload.chunk_size, resumable=True)
 
 	# create upload request and execute
@@ -376,7 +377,9 @@ def run(args):
 					send_upload_error(t)
 			
 			cprint(f"#l#fGVideo was successfully uploaded!#r #dhttps://youtu.be/{video_id}#r")
-			
+
+			safe_append_line(conf.directories.vods / "uploads.csv", f"{video_id},{','.join(slice.video_id for slice in stage.slices)}")
+
 			if conf.stage.delete_on_upload:
 				try:
 					os_remove(STAGE_DIR / f"{stage.id}.stage")

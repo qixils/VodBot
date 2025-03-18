@@ -3,7 +3,7 @@
 
 from .printer import cprint
 from .config import Config
-from .commands.stage import StageData
+from .stagedata import StageData
 
 import subprocess
 from pathlib import Path

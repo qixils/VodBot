@@ -1,17 +1,20 @@
 # Module that parses chatlogs to and from files
 
 from random import randint
-from .commands.stage import StageData
 from .printer import cprint
 from .twitch import ChatMessage
 from .config import Config
 from . import util
 
 import json
+import os
 from dataclasses import dataclass
 from dataclasses_json import dataclass_json
-from typing import List, Tuple
+from typing import List, Tuple, TYPE_CHECKING
 from pathlib import Path
+
+if TYPE_CHECKING:
+	from .stagedata import StageData
 
 
 # TODO: check for any and all unicode/symbols to change to hex entity codes
@@ -55,6 +58,7 @@ def chat_to_logfile(chatmsgs: List[ChatMessage], path: str) -> None:
 		
 		msgs.append({"user": users[s], "offset": m.offset, "message": m.msg})
 	
+	os.makedirs(os.path.dirname(path), exist_ok=True)
 	with open(path, "w") as f:
 		chatlog = _ChatLog.from_dict({"users": preamb, "msgs": msgs})
 		f.write(chatlog.to_json())
@@ -154,6 +158,7 @@ def chat_to_ytt(conf: Config, msgs: List[ChatMessage], path: str, vid_duration:i
 	# get chat with message in bounds
 	chat_lists = chat_to_listwithbounds(msgs, vid_duration, msg_duration)
 
+	os.makedirs(os.path.dirname(path), exist_ok=True)
 	with open(path, "w", encoding="utf8") as f:
 		# write preamble stuffs
 		f.write('<?xml version="1.0" encoding="utf-8"?>\n')
@@ -194,7 +199,7 @@ def chat_to_ytt(conf: Config, msgs: List[ChatMessage], path: str, vid_duration:i
 		f.write("</body></timedtext>")
 
 
-def process_stage(conf: Config, stage: StageData, mode:str) -> Path:
+def process_stage(conf: Config, stage: "StageData", mode:str) -> Path:
 	tempdir = Path(conf.directories.temp)
 
 	total_offset = 0

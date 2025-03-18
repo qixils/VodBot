@@ -93,9 +93,16 @@ def _print_progress(video_id: str, futures: List[Future]) -> None:
 	
 	cprint() # to go to the next line after all the printing is done.
 
+
+def clean_path(path: str) -> str:
+	if (slice_index := path.find('?')) != -1:
+		path = path[:slice_index]
+	return path
+
+
 def download_files(conf:Config, video_id:str, base_url:str, target_dir:Path, vod_paths:List[str]) -> OrderedDict[str, str]:
 	urls = [base_url + path for path in vod_paths]
-	targets = [str(target_dir / path) for path in vod_paths]
+	targets = [str(target_dir / clean_path(path)) for path in vod_paths]
 	retries = conf.pull.connection_retries
 	timeout = conf.pull.connection_timeout
 	chunk_size = conf.pull.chunk_size

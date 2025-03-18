@@ -1,7 +1,9 @@
 # Pull, downloads VODs and Clips from Twitch.tv
 
+from pathlib import Path
 from typing import List
 from vodbot import util, twitch
+from vodbot.config import Config
 from vodbot.itd import download as itd_dl, worker as itd_work
 from vodbot.printer import cprint
 from vodbot.itd.gql import set_client_id
@@ -10,6 +12,47 @@ from vodbot.webhook import init_webhooks, send_pull_clip, send_pull_error, send_
 
 from os import listdir
 from os.path import isfile
+
+
+def save_vod(vod: twitch.Vod, conf: Config, voddir: Path, cache: Cache, channel: twitch.Channel | None = None) -> bool:
+	filepath = voddir / f"{vod.created_at}_{vod.id}".replace(":", ";")
+	filename = str(filepath) + ".mkv"
+	metaname = str(filepath) + ".meta"
+	chatname = str(filepath) + ".chat"
+
+	# download chat
+	if conf.pull.save_chat and (channel is None or channel.save_chat):
+		itd_dl.dl_video_chat(vod, chatname)
+		vod.has_chat = True
+	# download video
+	if conf.pull.save_vods and (channel is None or channel.save_vods):
+		try:
+			itd_dl.dl_video(conf, vod, filename)
+		except itd_dl.JoiningFailed:
+			cprint(f"#fR#lVOD `{vod.id}` joining failed! Skipping...#r")
+			send_pull_error(f'Failed to join VOD files for "{vod.id}". Files have been preserved and VOD has been skipped.', vod.url)
+			return False
+		except itd_work.DownloadFailed:
+			cprint(f"#fR#lVOD `{vod.id}` download failed! Skipping...#r")
+			send_pull_error(f'Failed to download VOD files for "{vod.id}". VOD has been skipped.', vod.url)
+			return False
+		except itd_work.TwitchAccessDenied:
+			cprint(f"#fR#lVOD `{vod.id}` download failed! Twitch is denying access to a public video, contact Twitch Support. Skipping...#r")
+			send_pull_error(f'Failed to download VOD files for "{vod.id}", due to Twitch denying access to a public video. VOD has been skipped.', vod.url)
+			return False
+		except (itd_work.DownloadCancelled, KeyboardInterrupt):
+			cprint(f"\n#fR#lVOD `{vod.id}` download cancelled. Exiting...#r")
+			save_cache(conf, cache)
+			send_pull_error(f'Pull cancelled during download of VOD "{vod.id}".', vod.url)
+			raise KeyboardInterrupt()
+	# write meta file
+	vod.write_meta(metaname)
+	# write to cache
+	if channel is not None:
+		cache.channels[channel.login].vods[vod.id] = f"{vod.created_at}_{vod.id}.meta".replace(":", ";")
+	# send webhook
+	send_pull_vod(vod)
+	return True
 
 
 def run(args):
@@ -127,43 +170,8 @@ be changed in your configuration file, read more on the wiki page on GitHub.
 		voddir = VODS_DIR / channel.login
 		all_vods += len(channel.new_vods)
 		for vod in channel.new_vods:
-			filepath = voddir / f"{vod.created_at}_{vod.id}".replace(":", ";")
-			filename = str(filepath) + ".mkv"
-			metaname = str(filepath) + ".meta"
-			chatname = str(filepath) + ".chat"
-
-			# download chat
-			if conf.pull.save_chat and channel.save_chat:
-				itd_dl.dl_video_chat(vod, chatname)
-				vod.has_chat = True
-			# download video
-			if conf.pull.save_vods and channel.save_vods:
-				try:
-					itd_dl.dl_video(conf, vod, filename)
-				except itd_dl.JoiningFailed:
-					cprint(f"#fR#lVOD `{vod.id}` joining failed! Skipping...#r")
-					send_pull_error(f'Failed to join VOD files for "{vod.id}". Files have been preserved and VOD has been skipped.', vod.url)
-					continue
-				except itd_work.DownloadFailed:
-					cprint(f"#fR#lVOD `{vod.id}` download failed! Skipping...#r")
-					send_pull_error(f'Failed to download VOD files for "{vod.id}". VOD has been skipped.', vod.url)
-					continue
-				except itd_work.TwitchAccessDenied:
-					cprint(f"#fR#lVOD `{vod.id}` download failed! Twitch is denying access to a public video, contact Twitch Support. Skipping...#r")
-					send_pull_error(f'Failed to download VOD files for "{vod.id}", due to Twitch denying access to a public video. VOD has been skipped.', vod.url)
-					continue
-				except (itd_work.DownloadCancelled, KeyboardInterrupt):
-					cprint(f"\n#fR#lVOD `{vod.id}` download cancelled. Exiting...#r")
-					save_cache(conf, cache)
-					send_pull_error(f'Pull cancelled during download of VOD "{vod.id}".', vod.url)
-					raise KeyboardInterrupt()
-			# write meta file
-			vod.write_meta(metaname)
-			# write to cache
-			cache.channels[channel.login].vods[vod.id] = f"{vod.created_at}_{vod.id}.meta".replace(":", ";")
-			# send webhook
-			send_pull_vod(vod)
-			fin_vods += 1
+			if save_vod(vod, conf, voddir, cache, channel):
+				fin_vods += 1
 
 		clipdir = CLIPS_DIR / channel.login
 		all_clips += len(channel.new_clips)

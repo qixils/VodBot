@@ -47,6 +47,8 @@ setup(
 		"m3u8>=3.3.0",
 		
 		"requests>=2.28.1",
+        
+		"filelock~=3.18.0",
 	],
 	entry_points={
 		'console_scripts': ['vodbot=vodbot.__main__:deffered_main'],

@@ -1,11 +1,12 @@
 # Module that manages shelling out commands to FFmpeg, with functions returning paths to the final video.
 
 from .printer import cprint
-from .commands.stage import StageData, VideoSlice
+from .stagedata import StageData, VideoSlice
 from .config import Config
 
 import os
 import subprocess
+import shutil
 from pathlib import Path
 from typing import List
 
@@ -28,6 +29,11 @@ class FailedToCleanUp(VideoFailure):
 def slice_video(TEMP_DIR: Path, LOG_LEVEL: str, vslice: VideoSlice, REDIRECT: Path, i: int, total: int) -> Path:
 	tmpfile = TEMP_DIR / f"{vslice.video_id}={i}.mp4"
 	cprint(f"#rSlicing stage part ({i+1}/{total}) `#fM{vslice.video_id}#r` #d({vslice.ss} - {vslice.to})#r")
+
+	# If we're using the entire video, just copy the file
+	if vslice.ss == "0:0:0" and vslice.to == "EOF":
+		shutil.copy2(vslice.filepath, tmpfile)
+		return tmpfile
 
 	cmd = [ "ffmpeg", "-hide_banner", "-ss", vslice.ss ]
 

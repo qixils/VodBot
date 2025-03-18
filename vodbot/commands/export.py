@@ -1,7 +1,7 @@
 # Export video data to a specific location
 
 from vodbot.webhook import send_export_error, send_export_job_done, send_export_video
-from .stage import StageData
+from vodbot.stagedata import StageData
 
 import vodbot.util as util
 import vodbot.video as vbvid

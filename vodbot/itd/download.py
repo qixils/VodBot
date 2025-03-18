@@ -78,6 +78,11 @@ def dl_video(conf: Config, video: Vod, path: str):
 	path_map = worker.download_files(conf, video_id, base_uri, tempdir, vod_paths)
 	# cprint("\t#dDone, now to FFmpeg join...#r")
 
+	# Re-write the playlist file to adjust for illegal filenames
+	for segment in playlist.segments:
+		segment.uri = worker.clean_path(segment.uri)
+	playlist.dump(str(playlist_path))
+
 	# join the vods using FFmpeg at specified path
 	cwd = os.getcwd()
 	os.chdir(str(tempdir))
