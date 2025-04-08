@@ -27,7 +27,8 @@ class VideoData(TypedDict):
 
 
 # Python's input function allows for inputs that should not be allowed in filenames such as control characters
-DISALLOWED_CHARACTERS = [chr(x) for x in range(10)] + [chr(x) for x in range(11,32)] # just in case...
+DISALLOWED_CHARACTERS = list(set([chr(x) for x in range(10)] + [chr(x) for x in range(11,32)] + ['<', '>'])) # just in case...
+DISALLOWED_REGEX = re.compile(r"[<>]")
 RESERVED_NAMES = [
 	"\0", "CON", "PRN", "AUX", "NUL",
 	"COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
@@ -317,16 +318,19 @@ def check_title(default=None):
 	for x in DISALLOWED_CHARACTERS:
 		title = title.replace(x, "_")
 	
-	return title
+	return title[:100]
 
 
-def check_description(formatdict, inputdefault=None):
+def check_description(formatdict, inputdefault: str | None = None):
 	desc = ""
 
 	if inputdefault:
 		try:
 			inputdefault = inputdefault.format(**formatdict).replace("\\n", "\n")
+			inputdefault = DISALLOWED_REGEX.sub("_", inputdefault)
 			desc = inputdefault
+			while len(desc.encode('utf-8')) > 5000:
+				desc = desc[:-1]
 		except KeyError as err:
 			cprint(f"#fRDescription format error from default: {err}.#r")
 			desc = ""
@@ -345,7 +349,7 @@ def check_description(formatdict, inputdefault=None):
 			desc = ""
 			continue
 
-		if "<" in desc or ">" in desc or any((c in DISALLOWED_CHARACTERS) for c in desc):
+		if any((c in DISALLOWED_CHARACTERS) for c in desc):
 			cprint(f"#fRDescription cannot contain angled brackets (\"<\", \">\") or control characters.#r")
 			desc = ""
 			continue
@@ -498,7 +502,9 @@ def _new(args, conf: Config, cache: Cache):
 
 	# get title
 	if not args.title:
-		args.title = check_title(default=f"{videos[0]["meta"]["title"]} | {videos[0]["meta"]["user_name"]} stream archive")
+		suffix = f" | {videos[0]["meta"]["user_name"]} stream archive"
+		defaulttitle = videos[0]["meta"]["title"][:100-len(suffix)] + suffix
+		args.title = check_title(default=defaulttitle)
 
 	# get description
 	formatdict, datestring = create_format_dict(conf, args.streamer, utcdate=metadata["created_at"])
