@@ -23,6 +23,8 @@ from os import remove as os_remove
 from os.path import exists as os_exists
 from time import sleep
 from typing import List
+import re
+from csv import writer as csv_writer
 
 from httplib2.error import HttpLib2Error, HttpLib2ErrorWithResponse
 
@@ -289,6 +291,52 @@ def get_credentials(conf:Config, SCOPES:List[str]) -> Credentials:
 
 	return creds
 
+def scan_videos(conf: Config, service: Resource) -> None:
+    cprint("#dScanning YouTube channel for Twitch VOD references...")
+    page_token = None
+    matches = []
+    pattern = re.compile(r"https://twitch\.tv/videos/(\d+)")
+    
+    while True:
+        request = service.search().list(
+            part="snippet",
+            forMine=True,
+            maxResults=50,
+            type="video",
+            pageToken=page_token
+        )
+        
+        try:
+            response = request.execute()
+        except HttpError as e:
+            exit_prog(60, f"Failed to fetch videos from YouTube API: {e}")
+            
+        for item in response.get('items', []):
+            video_id = item['id']['videoId']
+            desc = item['snippet']['description']
+            
+            match = pattern.search(desc)
+            if match:
+                matches.append((video_id, match.group(1)))
+                cprint(f"#dFound match: #fCYouTube #r#fM{video_id} #fC-> Twitch #r#fM{match.group(1)}#r")
+        
+        page_token = response.get('nextPageToken')
+        if not page_token:
+            break
+    
+    if matches:
+        output_file = conf.directories.vods / "twitch_matches.csv"
+        try:
+            with open(output_file, 'w', newline='') as f:
+                writer = csv_writer(f)
+                writer.writerow(['youtube_id', 'twitch_id'])
+                writer.writerows(matches)
+            cprint(f"#fGWrote {len(matches)} matches to {output_file}#r")
+        except IOError as e:
+            exit_prog(61, f"Failed to write matches to CSV: {e}")
+    else:
+        cprint("#dNo matches found.")
+
 def run(args):
 	# load config
 	conf = load_conf(args.config)
@@ -316,19 +364,6 @@ def run(args):
 			exit_prog(11, "Failed to remove credentials for YouTube account.")
 		
 		return
-	
-	# load stages, but dont upload
-	# Handle id/all
-	stagedatas = None
-	if args.id == "all":
-		cprint("#dLoading stages...", end=" ")
-		# create a list of all the hashes and sort by date streamed, upload chronologically
-		stagedatas = StageData.load_all_stages(STAGE_DIR)
-		stagedatas.sort(key=sort_stagedata)
-	else:
-		cprint("#dLoading stage...", end=" ")
-		# check if stage exists, and prep it for upload
-		stagedatas = [StageData.load_from_id(STAGE_DIR, args.id)]
 
 	cprint("Authenticating with Google...", end=" ")
 
@@ -356,6 +391,24 @@ def run(args):
 		exit_prog(50, f"Failed to connect to YouTube API, \"{err}\".")
 	
 	cprint("done.#r")
+
+	# handle scan
+	if args.id == "scan":
+		scan_videos(conf, service)
+		return
+	
+	# load stages
+	# Handle id/all
+	stagedatas = None
+	if args.id == "all":
+		cprint("#dLoading stages...", end=" ")
+		# create a list of all the hashes and sort by date streamed, upload chronologically
+		stagedatas = StageData.load_all_stages(STAGE_DIR)
+		stagedatas.sort(key=sort_stagedata)
+	else:
+		cprint("#dLoading stage...", end=" ")
+		# check if stage exists, and prep it for upload
+		stagedatas = [StageData.load_from_id(STAGE_DIR, args.id)]
 	
 	# begin to upload
 	finished_jobs = 0
