@@ -513,7 +513,7 @@ This stream was automatically archived from a highlight on Twitch. It was discov
 
 If this video is noticed to be uploaded elsewhere by the creator or requested to be taken down then I will gladly oblige.
 
-This {videos[0]["meta"]["game_name"] or 'speedrun'} video was originally published on {{date}} on {' & '.join([f'https://twitch.tv/videos/{video["id"]}' for video in videos])} by {{link}}.
+This {videos[0]["meta"]["game_name"] or 'speedrun'} video was originally published on {{date}} on {' & '.join([f'https://twitch.tv/videos/{video["id"]}' for video in videos])} by {{link}}. It was titled {videos[0]["meta"]["title"]}
 
 For more information about this project, please visit https://archive.speedrun.club/
 '''.strip())
@@ -622,6 +622,7 @@ For more information about this project, please visit https://archive.speedrun.c
 
 	# make stage object
 	stage = StageData(streamers=args.streamer, title=args.title, desc=args.desc, datestring=datestring, slices=slices, thumbnail=tn)
+	stage.id = videos[0]["id"]
 	# Check that new "id" does not collide
 	while check_stage_id(stage.id, STAGE_DIR):
 		stage = StageData(streamers=args.streamer, title=args.title, desc=args.desc, datestring=datestring, slices=slices, thumbnail=tn)
@@ -644,8 +645,8 @@ For more information about this project, please visit https://archive.speedrun.c
 	cache.stages.append(stage.id)
 	# Done!
 
-	args.id = stage.id
-	run_upload(args)
+	# args.id = stage.id
+	# run_upload(args)
 
 
 def _list(args, conf:Config, cache: Cache):

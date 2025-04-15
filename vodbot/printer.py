@@ -45,5 +45,8 @@ def strip_color(text: str):
 	return text
 
 def cprint(*args, **kwargs):
-	args = [colorize(txt) for txt in args]
-	print(*args, **kwargs)
+	try:
+		args = [colorize(txt) for txt in args]
+		print(*args, **kwargs)
+	except:
+		pass
