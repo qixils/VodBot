@@ -109,8 +109,9 @@ def _upload_artifact(upload_string, response_upload, getting_video=False, filesi
 
 def upload_video(conf: Config, service: Resource, stagedata: StageData) -> str:
 	tmpfile = None
+	is_source = False
 	try:
-		tmpfile = vbvid.process_stage(conf, stagedata)
+		tmpfile, is_source = vbvid.process_stage(conf, stagedata)
 	except vbvid.FailedToSlice as e:
 		cprint(f"#r#fRSkipping stage `{stagedata.id}`, failed to slice video with ID of `{e.vid}`.#r\n")
 	except vbvid.FailedToConcat:
@@ -152,8 +153,9 @@ def upload_video(conf: Config, service: Resource, stagedata: StageData) -> str:
 		# delete vars to release the files
 		del media_file
 		del response_upload
-		# sleep(1)
-		os_remove(str(tmpfile))
+		 # Only remove if it's not a source file
+		if not is_source:
+			os_remove(str(tmpfile))
 	except Exception as e:
 		exit_prog(90, f"Failed to remove temp video slice file of stage `{stagedata.id}` after upload. {e}")
 	

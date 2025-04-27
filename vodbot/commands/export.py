@@ -14,7 +14,7 @@ from vodbot.cache import load_cache, save_cache
 from datetime import datetime
 from pathlib import Path
 from os import remove as os_remove
-from shutil import move as shutil_move
+from shutil import move as shutil_move, copy2 as shutil_copy2
 
 
 DISALLOWED_CHARACTERS = [
@@ -29,31 +29,32 @@ def sort_stagedata(stagedata):
 	return (date - EPOCH).total_seconds()
 
 
-def handle_stage(conf: Config, stage: StageData) -> Path:
+def handle_stage(conf: Config, stage: StageData) -> tuple[Path, bool]:
 	# handle not having videos to process
 	if not all(Path(x.filepath).is_file() for x in stage.slices):
 		lost_vids = [x.video_id for x in stage.slices if Path(x.filepath).is_file()]
 		cprint(f"#d#fYWARN: Skipping stage video `{stage.id}`, failed to find video(s) with ID(s) of `{lost_vids}`.#r")
 		send_export_error(f'For stage video "{stage.id}", failed to find video(s) with ID(s) "{lost_vids}".')
-		return None
+		return None, False
 
 	tmpfile = None
+	is_source = False
 	try:
-		tmpfile = vbvid.process_stage(conf, stage)
+		tmpfile, is_source = vbvid.process_stage(conf, stage)
 	except vbvid.FailedToSlice as e:
 		cprint(f"#d#fYWARN: Skipping stage video `{stage.id}`, failed to slice video with ID of `{e.video_id}`.#r")
 		send_export_error(f'For stage video "{stage.id}", failed to slice video with ID "{e.video_id}".')
-		return None
+		return None, False
 	except vbvid.FailedToConcat:
 		cprint(f"#d#fYWARN: Skipping stage video `{stage.id}`, failed to concatenate videos.#r")
 		send_export_error(f'For stage video "{stage.id}", failed to concatenate videos.')
-		return None
+		return None, False
 	except vbvid.FailedToCleanUp as e:
 		cprint(f"#d#fYWARN: Skipping stage video `{stage.id}`, failed to clean up temporary files.#r\n{e.video_id}")
 		send_export_error(f'For stage video "{stage.id}", failed to clean up temporary files.')
-		return None
+		return None, False
 	
-	return tmpfile
+	return tmpfile, is_source
 
 
 def run(args):
@@ -79,9 +80,10 @@ def run(args):
 		tmpfile = None
 		tmpchat = None
 		tmpnail = None
+		is_source = False
 		# Export with FFmpeg
 		if conf.export.video_enable:
-			tmpfile = handle_stage(conf, stage)
+			tmpfile, is_source = handle_stage(conf, stage)
 		# Export chat
 		if conf.export.chat_enable:
 			tmpchat = vbchat.process_stage(conf, stage, "export")
@@ -97,8 +99,10 @@ def run(args):
 			title = title.replace(x, "_")
 
 		# move appropriate files
-		if tmpfile is not None:
+		if tmpfile is not None and not is_source:
 			shutil_move(str(tmpfile), str(args.path / (title+tmpfile.suffix)))
+		elif tmpfile is not None and is_source:
+			shutil_copy2(str(tmpfile), str(args.path / (title+tmpfile.suffix)))
 		if tmpchat is not None:
 			shutil_move(str(tmpchat), str(args.path / (title+tmpchat.suffix)))
 		if tmpnail is not None:

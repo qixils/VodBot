@@ -102,7 +102,7 @@ def main():
 
 	# Subparsers for different commands
 	subparsers = parser.add_subparsers(title="command", dest="cmd", metavar="CMD",
-		help="command to run: init, info, pull, stage, or upload.")
+		help="command to run: init, info, pull, stage, upload, export, or purge.")
 
 	# `vodbot init`
 	initparse = subparsers.add_parser("init", description="Runs the setup process for VodBot")
@@ -162,6 +162,9 @@ def main():
 	export.add_argument("id", type=str, help="id of the staged video data, or `all` for all stages").completer = stage_completer
 	export.add_argument("path", type=Path, help="directory to export the video(s) to").completer = DirectoriesCompleter
 
+	# `vodbot purge`
+	purge = subparsers.add_parser("purge", description="Purges videos that are no longer referenced in any stages.")
+
 	# `vodbot info <vod/clip/channel_id/url>`
 	info = subparsers.add_parser("info", description="Prints out info on the Channel, Clip, or VOD given.")
 	info.add_argument("id", type=str, help="id/url of the Channel, Clip, or VOD")
@@ -192,6 +195,8 @@ def main():
 		import_module(".commands.export", "vodbot").run(args)
 	elif args.cmd == "info":
 		import_module(".commands.info", "vodbot").run(args)
+	elif args.cmd == "purge":
+		import_module(".commands.purge", "vodbot").run(args)
 	else:
 		util.exit_prog(-3, f"Unknown top-level command `{args.cmd}`, run with `-h` to see what commands are available.")
 

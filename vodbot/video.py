@@ -26,14 +26,13 @@ class FailedToCleanUp(VideoFailure):
 	pass
 
 
-def slice_video(TEMP_DIR: Path, LOG_LEVEL: str, vslice: VideoSlice, REDIRECT: Path, i: int, total: int) -> Path:
+def slice_video(TEMP_DIR: Path, LOG_LEVEL: str, vslice: VideoSlice, REDIRECT: Path, i: int, total: int) -> tuple[Path, bool]:
 	tmpfile = TEMP_DIR / f"{vslice.video_id}={i}.mp4"
 	cprint(f"#rSlicing stage part ({i+1}/{total}) `#fM{vslice.video_id}#r` #d({vslice.ss} - {vslice.to})#r")
 
-	# If we're using the entire video, just copy the file
+	# If we're using the entire video, just return the source file
 	if vslice.ss == "0:0:0" and vslice.to == "EOF":
-		shutil.copy2(vslice.filepath, tmpfile)
-		return tmpfile
+		return Path(vslice.filepath), True
 
 	cmd = [ "ffmpeg", "-hide_banner", "-ss", vslice.ss ]
 
@@ -55,7 +54,7 @@ def slice_video(TEMP_DIR: Path, LOG_LEVEL: str, vslice: VideoSlice, REDIRECT: Pa
 	if result.returncode != 0:
 		raise FailedToSlice(vslice.video_id)
 	
-	return tmpfile
+	return tmpfile, False
 
 
 def concat_video(TEMP_DIR: Path, LOG_LEVEL: str, stage_id: str, slice_paths: List[Path], REDIRECT: Path) -> Path:
@@ -102,27 +101,31 @@ def concat_video(TEMP_DIR: Path, LOG_LEVEL: str, stage_id: str, slice_paths: Lis
 	return concat_path
 
 
-def process_stage(conf: Config, stage: StageData) -> Path:
+def process_stage(conf: Config, stage: StageData) -> tuple[Path, bool]:
 	tempdir = Path(conf.directories.temp)
 	loglevel = conf.export.ffmpeg_loglevel
 
 	# slice all the slices
 	slices = len(stage.slices)
-	slice_paths = [slice_video(tempdir, loglevel, stage.slices[x], conf.export.ffmpeg_stderr, x, slices) for x in range(slices)]
+	slice_results = [slice_video(tempdir, loglevel, stage.slices[x], conf.export.ffmpeg_stderr, x, slices) for x in range(slices)]
+	
+	# Unzip the results
+	slice_paths, is_source = zip(*slice_results)
 
-	# edge case of one video
+	# edge case of one video - pass through the is_source flag
 	if len(slice_paths) == 1:
-		return slice_paths[0]
+		return slice_paths[0], is_source[0]
 
 	# concat all the slices
 	concat_path = concat_video(tempdir, loglevel, stage.id, slice_paths, conf.export.ffmpeg_stderr)
 
-	# clean up old slices
-	for path in slice_paths:
-		try:
-			os.remove(path)
-		except Exception as e:
-			raise FailedToCleanUp(e)
+	# clean up old slices, but only those that aren't source files
+	for path, src in zip(slice_paths, is_source):
+		if not src:
+			try:
+				os.remove(path)
+			except Exception as e:
+				raise FailedToCleanUp(e)
 
-	# return the path of the concated vid
-	return concat_path
+	# return the path of the concated vid (never a source file)
+	return concat_path, False
