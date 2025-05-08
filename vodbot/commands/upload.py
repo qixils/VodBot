@@ -438,8 +438,8 @@ def run(args):
 			if conf.stage.delete_on_upload:
 				try:
 					os_remove(STAGE_DIR / f"{stage.id}.stage")
-					cache.stages.remove(stage.id)
-					save_cache(conf, cache)
+					# cache.stages.remove(stage.id)
+					# save_cache(conf, cache)
 				except:
 					send_upload_error(f"Failed to remove stage `{stage.id}` after upload.")
 					if len(stagedatas) < 1:

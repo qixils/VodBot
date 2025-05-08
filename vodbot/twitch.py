@@ -236,10 +236,10 @@ def get_vod(videoId: str, conf: Config) -> Vod:
 
 	v = resp["data"]["video"]
 
-	if v["lengthSeconds"] > (12 * 60 * 60):
-		safe_append_line(conf.directories.vods / "skipped.txt", videoId)
-		print(f"Cannot upload video as it exceeds 12 hours ({v["lengthSeconds"]})")
-		raise gql.GQLItemError(f"Cannot download video as it exceeds 12 hours ({v["lengthSeconds"]})")
+	# if v["lengthSeconds"] > (12 * 60 * 60):
+	# 	safe_append_line(conf.directories.vods / "skipped.txt", videoId)
+	# 	print(f"Cannot upload video as it exceeds 12 hours ({v["lengthSeconds"]})")
+	# 	raise gql.GQLItemError(f"Cannot download video as it exceeds 12 hours ({v["lengthSeconds"]})")
 
 	c, g, b, s = v["creator"], v["game"], v["broadcastType"], v["status"]
 

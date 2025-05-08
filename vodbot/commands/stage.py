@@ -411,7 +411,7 @@ def check_thumbnail_game(possible_games: Dict[str, _ConfigThumbnailIcon]) -> str
 			game = int(game)
 			game = indexed_games[game]
 		except (ValueError, IndexError) as _:
-			cprint(f"#l#fRGame identifier must be a number between 0 and {len(possible_games)-1}!#r")
+			cprint(f"#l#fRGame identifier must be a number between 0 and {len(indexed_games)-1}!#r")
 			game = ""
 			continue
 	
@@ -467,6 +467,69 @@ def check_thumbnail_timestamp() -> str:
 	return ts
 
 
+def _create_video_slices(videos: List[Dict], start_times: List[str], end_times: List[str]) -> List[List[VideoSlice]]:
+    """Create video slices treating all input videos as one continuous stream, 
+    returning chunks of up to 12 hours where each chunk may contain multiple video segments"""
+    upload_chunks: List[List[VideoSlice]] = []
+    current_chunk: List[VideoSlice] = []
+    current_chunk_duration = 0
+    current_video = 0
+    
+    while current_video < len(videos):
+        vid = videos[current_video]
+        ss = start_times[current_video].split(":")
+        ss_secs = int(ss[0]) * 3600 + int(ss[1]) * 60 + int(ss[2])
+        
+        if end_times[current_video] == "EOF":
+            end_secs = vid["meta"]["length"]
+        else:
+            to = end_times[current_video].split(":")
+            end_secs = int(to[0]) * 3600 + int(to[1]) * 60 + int(to[2])
+        
+        video_duration = end_secs - ss_secs
+        remaining_duration = video_duration
+        current_ss = ss_secs
+
+        while remaining_duration > 0:
+            # How much can we take from this video?
+            space_in_chunk = 43200 - current_chunk_duration  # 12 hours in seconds
+            duration_to_take = min(remaining_duration, space_in_chunk)
+            
+            # Convert current_ss and duration to timestamps
+            start_ts = f"{current_ss//3600}:{(current_ss%3600)//60}:{current_ss%60}"
+            if duration_to_take == remaining_duration and end_times[current_video] == "EOF":
+                end_ts = "EOF"
+            else:
+                end_sec = current_ss + duration_to_take
+                end_ts = f"{end_sec//3600}:{(end_sec%3600)//60}:{end_sec%60}"
+            
+            # Add this segment
+            current_chunk.append(VideoSlice(
+                video_id=vid["id"],
+                ss=start_ts,
+                to=end_ts,
+                filepath=str(vid["file"])
+            ))
+            
+            current_chunk_duration += duration_to_take
+            remaining_duration -= duration_to_take
+            current_ss += duration_to_take
+            
+            # Check if chunk is full
+            if current_chunk_duration >= 43200 or remaining_duration <= 0 and current_video == len(videos) - 1:
+                upload_chunks.append(current_chunk)
+                current_chunk = []
+                current_chunk_duration = 0
+        
+        current_video += 1
+    
+    # Add any remaining chunks
+    if current_chunk:
+        upload_chunks.append(current_chunk)
+    
+    return upload_chunks
+
+
 def _new(args, conf: Config, cache: Cache):
 	if not args.id:
 		util.exit_prog(13, 'No videos')
@@ -499,12 +562,6 @@ def _new(args, conf: Config, cache: Cache):
 		for f in videos:
 			default_streamers.add(f["meta"]["user_login"])
 		args.streamer = list(default_streamers) # check_streamers(default=list(default_streamers), conf_users=[chan.username for chan in conf.channels])
-
-	# get title
-	if not args.title:
-		suffix = f" | {videos[0]["meta"]["user_name"]} stream archive"
-		defaulttitle = videos[0]["meta"]["title"][:100-len(suffix)] + suffix
-		args.title = check_title(default=defaulttitle)
 
 	# get description
 	formatdict, datestring = create_format_dict(conf, args.streamer, utcdate=metadata["created_at"])
@@ -550,13 +607,6 @@ For more information about this project, please visit https://archive.speedrun.c
 		args.ss += [check_time("Start", args.ss[x] if x < len(args.ss) else None)]
 		args.to += [check_time("End", args.to[x] if x < len(args.to) else None)]
 
-	# make slice objects
-	slices = []
-	for x in range(len(videos)):
-		vid = videos[x]
-		vidslice = VideoSlice(video_id=vid["id"], ss=args.ss[x], to=args.to[x], filepath=str(vid["file"]))
-		slices += [vidslice]
-
 	# make thumbnail data
 	tn = None
 	if conf.thumbnail.enable:
@@ -592,7 +642,7 @@ For more information about this project, please visit https://archive.speedrun.c
 		text = None
 		if args.tn_text:
 			# we do not check raw text input
-			text = args.tn_text
+			text = args.tn_text  # todo: parts
 		else:
 			text = check_thumbnail_text()
 		
@@ -620,33 +670,46 @@ For more information about this project, please visit https://archive.speedrun.c
 
 		tn = ThumbnailData(heads=heads, game=game, text=text, video_slice_id=vid_id, timestamp=timestamp)
 
-	# make stage object
-	stage = StageData(streamers=args.streamer, title=args.title, desc=args.desc, datestring=datestring, slices=slices, thumbnail=tn)
-	stage.id = videos[0]["id"]
-	# Check that new "id" does not collide
-	while check_stage_id(stage.id, STAGE_DIR):
-		stage = StageData(streamers=args.streamer, title=args.title, desc=args.desc, datestring=datestring, slices=slices, thumbnail=tn)
+	# make slice objects treating all videos as one continuous stream
+	all_chunks = _create_video_slices(videos, args.ss, args.to)
+	part_count = len(all_chunks)
 
-	# shorter file name
-	#shortfile = stage.filename.replace(VODS_DIR, "$vods").replace(CLIPS_DIR, "$clips")
+	# Create a stage for each chunk
+	for part_idx in range(part_count):
+		slices = all_chunks[part_idx]  # This chunk contains all video segments that need concatenating
+		
+		# Get title with part number if needed
+		suffix = f" | {videos[0]['meta']['user_name']} archive"
+		if part_count > 1:
+			suffix += f" (p.{part_idx+1})"
+		defaulttitle = videos[0]["meta"]["title"][:100-len(suffix)] + suffix
+		args.title = check_title(default=defaulttitle)
 
-	cprint(f"#r`#fC{stage.title}#r` #fM{' '.join(stage.streamers)}#r #d({stage.id})#r")
-	cprint(f"#d#fG{stage.desc}#r")
-	for vid in stage.slices:
-		cprint(f"#fM{vid.video_id}#r > #fY{vid.ss}#r - #fY{vid.to}#r")
-	if conf.thumbnail.enable:
-		cprint(f"#fBThumbnail: #fG{tn.game} #r`#fC{tn.text}#r` #d(vid{tn.video_slice_id} @ {tn.timestamp})#r")
-		if tn.heads:
-			cprint(f"#dwith...#r {', '.join([f'#fM{head}#r' for head in tn.heads])}")
-	
-	# write stage
-	stagename = str(STAGE_DIR / f"{stage.id}.stage")
-	stage.write_stage(stagename)
-	cache.stages.append(stage.id)
+		# Create stage object
+		stage = StageData(streamers=args.streamer, title=args.title, desc=args.desc, 
+						datestring=datestring, slices=slices, thumbnail=tn)
+		stage.id = f"{videos[0]['id']}" + (f"_p{part_idx+1}" if part_count > 1 else "")
+		
+		# Check that new "id" does not collide
+		while check_stage_id(stage.id, STAGE_DIR):
+			stage = StageData(streamers=args.streamer, title=args.title, desc=args.desc,
+							datestring=datestring, slices=slices, thumbnail=tn)
+
+		# Write stage
+		stagename = str(STAGE_DIR / f"{stage.id}.stage")
+		stage.write_stage(stagename)
+		# cache.stages.append(stage.id)
+		
+		cprint(f"#r`#fC{stage.title}#r` #fM{' '.join(stage.streamers)}#r #d({stage.id})#r")
+		cprint(f"#d#fG{stage.desc}#r")
+		for vid in stage.slices:
+			cprint(f"#fM{vid.video_id}#r > #fY{vid.ss}#r - #fY{vid.to}#r")
+		if conf.thumbnail.enable:
+			cprint(f"#fBThumbnail: #fG{tn.game} #r`#fC{tn.text}#r` #d(vid{tn.video_slice_id} @ {tn.timestamp})#r")
+			if tn.heads:
+				cprint(f"#dwith...#r {', '.join([f'#fM{head}#r' for head in tn.heads])}")
+
 	# Done!
-
-	# args.id = stage.id
-	# run_upload(args)
 
 
 def _list(args, conf:Config, cache: Cache):

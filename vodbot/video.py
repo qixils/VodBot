@@ -26,20 +26,21 @@ class FailedToCleanUp(VideoFailure):
 	pass
 
 
-def slice_video(TEMP_DIR: Path, LOG_LEVEL: str, vslice: VideoSlice, REDIRECT: Path, i: int, total: int) -> tuple[Path, bool]:
-	tmpfile = TEMP_DIR / f"{vslice.video_id}={i}.mp4"
+def slice_video(TEMP_DIR: Path, LOG_LEVEL: str, vslice: VideoSlice, REDIRECT: Path, i: int, total: int, stage_id: str) -> tuple[Path, bool]:
+	tmpfile = TEMP_DIR / f"{stage_id}={vslice.video_id}={i}.mp4"
 	cprint(f"#rSlicing stage part ({i+1}/{total}) `#fM{vslice.video_id}#r` #d({vslice.ss} - {vslice.to})#r")
 
 	# If we're using the entire video, just return the source file
 	if vslice.ss == "0:0:0" and vslice.to == "EOF":
 		return Path(vslice.filepath), True
 
-	cmd = [ "ffmpeg", "-hide_banner", "-ss", vslice.ss ]
+	cmd = [ "ffmpeg", "-hide_banner" ]
 
 	if vslice.to != "EOF":
 		cmd += ["-to", vslice.to]
 
 	cmd += [
+		"-ss", vslice.ss,
 		"-i", vslice.filepath, "-c", "copy",
 		str(tmpfile), "-y", "-stats", "-loglevel", LOG_LEVEL
 	]
@@ -107,7 +108,7 @@ def process_stage(conf: Config, stage: StageData) -> tuple[Path, bool]:
 
 	# slice all the slices
 	slices = len(stage.slices)
-	slice_results = [slice_video(tempdir, loglevel, stage.slices[x], conf.export.ffmpeg_stderr, x, slices) for x in range(slices)]
+	slice_results = [slice_video(tempdir, loglevel, stage.slices[x], conf.export.ffmpeg_stderr, x, slices, stage.id) for x in range(slices)]
 	
 	# Unzip the results
 	slice_paths, is_source = zip(*slice_results)
