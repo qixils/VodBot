@@ -469,11 +469,13 @@ def check_thumbnail_timestamp() -> str:
 
 def _create_video_slices(videos: List[Dict], start_times: List[str], end_times: List[str]) -> List[List[VideoSlice]]:
     """Create video slices treating all input videos as one continuous stream, 
-    returning chunks of up to 12 hours where each chunk may contain multiple video segments"""
+    returning chunks of up to 11:59:59 where each chunk may contain multiple video segments"""
     upload_chunks: List[List[VideoSlice]] = []
     current_chunk: List[VideoSlice] = []
     current_chunk_duration = 0
     current_video = 0
+    
+    MAX_CHUNK_DURATION = 43199  # 11:59:59 in seconds
     
     while current_video < len(videos):
         vid = videos[current_video]
@@ -492,7 +494,7 @@ def _create_video_slices(videos: List[Dict], start_times: List[str], end_times: 
 
         while remaining_duration > 0:
             # How much can we take from this video?
-            space_in_chunk = 43200 - current_chunk_duration  # 12 hours in seconds
+            space_in_chunk = MAX_CHUNK_DURATION - current_chunk_duration
             duration_to_take = min(remaining_duration, space_in_chunk)
             
             # Convert current_ss and duration to timestamps
@@ -515,8 +517,8 @@ def _create_video_slices(videos: List[Dict], start_times: List[str], end_times: 
             remaining_duration -= duration_to_take
             current_ss += duration_to_take
             
-            # Check if chunk is full
-            if current_chunk_duration >= 43200 or remaining_duration <= 0 and current_video == len(videos) - 1:
+            # Check if chunk is full or if this is the last segment
+            if current_chunk_duration >= MAX_CHUNK_DURATION or (remaining_duration <= 0 and current_video == len(videos) - 1):
                 upload_chunks.append(current_chunk)
                 current_chunk = []
                 current_chunk_duration = 0
